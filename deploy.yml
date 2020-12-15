@@ -1,0 +1,84 @@
+- hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Run terraform apply
+      terraform:
+        project_path: './terraform'
+        state: present
+        #  force_init: yes
+      register: terraform
+    - name: Print terraform output values 
+      debug: msg={{ terraform.outputs }}
+    - set_fact: hostname={{ terraform.outputs.workshop.value.hostname }}
+
+    - set_fact: private_key={{ terraform.outputs.workshop.value.private_key }}
+    - set_fact: private_key_name=workshop.rsa
+      run_once: true
+    - name: Add newly created node to hosts
+      add_host: 
+        hostname: "{{ terraform.outputs.workshop.value.public_ip }}"
+        group: nodes
+        ansible_user: outscale
+        ansible_ssh_private_key_file: "{{ private_key_name }}"
+    - name: Remove private key file
+      local_action:
+        module: file
+        path: "{{ private_key_name }}"
+        state: absent
+    - name: Create private key file
+      local_action:
+        module: file
+        path: "{{ private_key_name }}"
+        mode: '0600' 
+        state: touch
+    - name: Store private key 
+      lineinfile:
+        path: "{{ private_key_name }}"
+        line: "{{ private_key }}"
+
+    - name: Remove connect-ssh.sh file
+      local_action:
+        module: file
+        path: "connect-ssh.sh"
+        state: absent
+    - name: Create connect-ssh.sh content
+      local_action:
+        module: file
+        path: "connect-ssh.sh"
+        mode: '0755' 
+        state: touch
+    - name: Store connect-ssh.sh content 
+      lineinfile:
+        path: "connect-ssh.sh"
+        line: "#!/bin/bash\nssh -v -i {{ private_key_name }} outscale@{{ terraform.outputs.workshop.value.public_ip }} -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+
+- hosts: nodes
+  become: yes
+  become_method: sudo
+  become_user: root
+  gather_facts: no
+  pre_tasks:
+    - name: Wait for system to become reachable
+      wait_for_connection:
+        #  delay: 60
+        timeout: 300
+    - name: Gather facts
+      setup:
+    - name: Install some packages dependencies
+      yum:
+        name:
+          - epel-release
+    - name: Install some packages...
+      yum:
+        name:
+          - curl
+          - bind-utils
+          - git
+          - vim
+  roles:
+    - role: geerlingguy.nginx
+      become: yes
+  tasks:
+    - name: Show web server url
+      debug:
+        msg: "See: http://{{ inventory_hostname }}"
